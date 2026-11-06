@@ -2,6 +2,7 @@ name: SWS-Waechter
 
 on:
   schedule:
+    # alle 5 Minuten (Zeitplan neu registriert)
     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
