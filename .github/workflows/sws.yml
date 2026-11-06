@@ -1,9 +1,12 @@
 name: SWS-Waechter
 
+# Ein Lauf prueft den Feed ca. 5,5 Stunden lang alle 5 Minuten
+# und startet danach selbst den naechsten Lauf (Dauerschleife).
+# Der Zeitplan ist nur Reserve, falls die Kette einmal abreisst.
+
 on:
   schedule:
-    # alle 5 Minuten (Zeitplan neu registriert)
-    - cron: "*/5 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       test:
@@ -13,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: sws
@@ -21,20 +25,38 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - name: Feed pruefen
+
+      - name: Testmeldung
+        if: ${{ inputs.test }}
         env:
           PROWL_API_KEY: ${{ secrets.PROWL_API_KEY }}
-          SWS_TEST: ${{ inputs.test && '1' || '0' }}
+          SWS_TEST: "1"
         run: php sws-prowl.php
-      - name: Stand speichern
+
+      - name: Feed alle 5 Minuten pruefen
+        if: ${{ !inputs.test }}
+        env:
+          PROWL_API_KEY: ${{ secrets.PROWL_API_KEY }}
         run: |
-          if [ -n "$(git status --porcelain sws-prowl-state.json)" ]; then
-            git config user.name "sws-waechter"
-            git config user.email "actions@users.noreply.github.com"
-            git add sws-prowl-state.json
-            git commit -m "Stand aktualisiert"
-            git pull --rebase
-            git push
-          fi
+          git config user.name "sws-waechter"
+          git config user.email "actions@users.noreply.github.com"
+          ende=$((SECONDS + 19800))
+          while [ $SECONDS -lt $ende ]; do
+            echo "--- Pruefung $(date -u +%H:%M) UTC"
+            php sws-prowl.php || echo "Pruefung fehlgeschlagen, naechster Versuch in 5 Minuten"
+            if [ -n "$(git status --porcelain sws-prowl-state.json)" ]; then
+              git add sws-prowl-state.json
+              git commit -q -m "Stand aktualisiert"
+              git pull -q --rebase && git push -q || echo "Push fehlgeschlagen"
+            fi
+            sleep 300
+          done
+
+      - name: Naechsten Lauf starten
+        if: ${{ !inputs.test && always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run sws.yml --ref main --repo ${{ github.repository }}
